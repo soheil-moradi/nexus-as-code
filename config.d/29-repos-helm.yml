@@ -1,0 +1,6 @@
+repositories:
+  helm:
+    - name: "helm-proxy-stable"
+      type: "proxy"
+      blob_store: "helm-blob"
+      remote_url: "https://charts.helm.sh/stable"

@@ -1,0 +1,6 @@
+repositories:
+  ansible:
+    - name: "ansible-proxy-galaxy"
+      type: "proxy"
+      blob_store: "ansible-blob"
+      remote_url: "https://galaxy.ansible.com"

@@ -1,0 +1,6 @@
+repositories:
+  alpine:
+    - name: "alpine-proxy-official"
+      type: "proxy"
+      blob_store: "alpine-blob"
+      remote_url: "https://dl-cdn.alpinelinux.org/alpine/"

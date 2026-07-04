@@ -1,0 +1,6 @@
+repositories:
+  swift:
+    - name: "swift-proxy-swiftorg"
+      type: "proxy"
+      blob_store: "swift-blob"
+      remote_url: "https://swift.org"

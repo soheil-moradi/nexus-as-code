@@ -1,0 +1,6 @@
+repositories:
+  p2:
+    - name: "p2-proxy-eclipse"
+      type: "proxy"
+      blob_store: "p2-blob"
+      remote_url: "http://download.eclipse.org/releases/2024-03"

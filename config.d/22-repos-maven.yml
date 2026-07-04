@@ -1,0 +1,21 @@
+repositories:
+  maven:
+    - name: "maven2-proxy-central"
+      type: "proxy"
+      blob_store: "maven-blob"
+      remote_url: "https://repo1.maven.org/maven2"
+      version_policy: "release"
+      layout_policy: "strict"
+    - name: "maven2-hosted-releases"
+      type: "hosted"
+      blob_store: "maven-blob"
+      version_policy: "release"
+      layout_policy: "strict"
+      write_policy: "allow_once"
+    - name: "maven2-group-public"
+      type: "group"
+      blob_store: "maven-blob"
+      version_policy: "mixed"
+      members:
+        - "maven2-proxy-central"
+        - "maven2-hosted-releases"

@@ -1,0 +1,6 @@
+repositories:
+  raw:
+    - name: "raw-proxy-alpine"
+      type: "proxy"
+      blob_store: "raw-blob"
+      remote_url: "https://dl-cdn.alpinelinux.org/alpine/"

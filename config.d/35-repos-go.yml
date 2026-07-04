@@ -1,0 +1,6 @@
+repositories:
+  go:
+    - name: "go-proxy-goproxy"
+      type: "proxy"
+      blob_store: "go-blob"
+      remote_url: "https://proxy.golang.org"

@@ -1,0 +1,7 @@
+repositories:
+  conan:
+    - name: "conan-proxy-conancenter"
+      type: "proxy"
+      blob_store: "conan-blob"
+      remote_url: "https://center.conan.io"
+      forge_url: "https://center.conan.io"

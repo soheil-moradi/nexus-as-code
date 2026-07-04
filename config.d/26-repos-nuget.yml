@@ -1,0 +1,7 @@
+repositories:
+  nuget:
+    - name: "nuget-proxy-nugetorg"
+      type: "proxy"
+      blob_store: "nuget-blob"
+      remote_url: "https://api.nuget.org/v3/index.json"
+      feed_version: "V3"

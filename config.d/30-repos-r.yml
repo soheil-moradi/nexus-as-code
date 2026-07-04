@@ -1,0 +1,6 @@
+repositories:
+  r:
+    - name: "r-proxy-cran"
+      type: "proxy"
+      blob_store: "r-blob"
+      remote_url: "https://cran.rstudio.com"

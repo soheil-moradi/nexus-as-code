@@ -1,0 +1,7 @@
+repositories:
+  terraform:
+    - name: "terraform-proxy-official"
+      type: "proxy"
+      blob_store: "terraform-blob"
+      remote_url: "https://releases.hashicorp.com/terraform-provider-aws/"
+      package_type: "MODULE"

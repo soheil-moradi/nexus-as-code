@@ -1,0 +1,12 @@
+repositories:
+  apt:
+    - name: "apt-proxy-ubuntu-jammy-official"
+      type: "proxy"
+      blob_store: "apt-blob"
+      distribution: "jammy"
+      remote_url: "http://archive.ubuntu.com/ubuntu/"
+    - name: "apt-proxy-debian-bookworm-official"
+      type: "proxy"
+      blob_store: "apt-blob"
+      distribution: "bookworm"
+      remote_url: "http://deb.debian.org/debian"

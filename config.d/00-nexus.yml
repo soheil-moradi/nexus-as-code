@@ -1,0 +1,4 @@
+nexus:
+  url: "http://your-nexus-server:8081"
+  username: "USER"
+  password: "PASSWORD"

@@ -1,0 +1,6 @@
+repositories:
+  conda:
+    - name: "conda-proxy-anaconda"
+      type: "proxy"
+      blob_store: "conda-blob"
+      remote_url: "https://repo.anaconda.com/pkgs/free"

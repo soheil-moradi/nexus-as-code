@@ -1,0 +1,8 @@
+repositories:
+  yum:
+    - name: "yum-proxy-epel"
+      type: "proxy"
+      blob_store: "yum-blob"
+      remote_url: "https://dl.fedoraproject.org/pub/epel/"
+      repodata_depth: 0
+      deploy_policy: "PERMISSIVE"

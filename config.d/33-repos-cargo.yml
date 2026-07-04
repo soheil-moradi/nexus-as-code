@@ -1,0 +1,6 @@
+repositories:
+  cargo:
+    - name: "cargo-proxy-cratesio"
+      type: "proxy"
+      blob_store: "cargo-blob"
+      remote_url: "https://crates.io"

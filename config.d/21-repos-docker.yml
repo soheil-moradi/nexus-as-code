@@ -1,0 +1,21 @@
+repositories:
+  docker:
+    - name: "docker-proxy-hub"
+      type: "proxy"
+      blob_store: "docker-blob"
+      connector: "path"
+      remote_url: "https://registry-1.docker.io"
+      index_type: "HUB"
+      foreign_layers: true
+    - name: "docker-hosted-private"
+      type: "hosted"
+      blob_store: "docker-blob"
+      connector: "path"
+      write_policy: "allow"
+    - name: "docker-group-all"
+      type: "group"
+      blob_store: "docker-blob"
+      connector: "path"
+      members:
+        - "docker-proxy-hub"
+        - "docker-hosted-private"

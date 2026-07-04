@@ -1,0 +1,6 @@
+repositories:
+  rubygems:
+    - name: "rubygems-proxy-rubygems"
+      type: "proxy"
+      blob_store: "rubygems-blob"
+      remote_url: "https://rubygems.org"

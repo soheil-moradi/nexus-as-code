@@ -1,0 +1,10 @@
+repositories:
+  pypi:
+    - name: "pypi-proxy-official"
+      type: "proxy"
+      blob_store: "pypi-blob"
+      remote_url: "https://pypi.org/simple/"
+    - name: "pypi-hosted-private"
+      type: "hosted"
+      blob_store: "pypi-blob"
+      write_policy: "allow_once"

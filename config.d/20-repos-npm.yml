@@ -1,0 +1,16 @@
+repositories:
+  npm:
+    - name: "npm-proxy-official"
+      type: "proxy"
+      blob_store: "npm-blob"
+      remote_url: "https://registry.npmjs.org"
+    - name: "npm-hosted-private"
+      type: "hosted"
+      blob_store: "npm-blob"
+      write_policy: "allow"
+    - name: "npm-group-all"
+      type: "group"
+      blob_store: "npm-blob"
+      members:
+        - "npm-proxy-official"
+        - "npm-hosted-private"

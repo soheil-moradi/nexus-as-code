@@ -1,0 +1,6 @@
+repositories:
+  cocoapods:
+    - name: "cocoapods-proxy-official"
+      type: "proxy"
+      blob_store: "cocoapods-blob"
+      remote_url: "https://cdn.cocoapods.org/"
