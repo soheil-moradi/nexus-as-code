@@ -8,14 +8,8 @@ logger = logging.getLogger(__name__)
 
 FORMAT = "alpine"
 
-# 🔥 A default RSA key (for testing) to resolve the "must not be empty" error.
-# In a production environment, replace this with your own private key.
-
-
-DEFAULT_ALPINE_KEYPAIR = """-----BEGIN RSA PRIVATE KEY-----
-MIIEogIBAAKCAQEAwO... (this is a sample; the actual key must be at least 2048 bits)
-... (please generate a valid key using openssl)
------END RSA PRIVATE KEY-----"""
+# 🔥 Default key to fix the "must not be empty" error
+DEFAULT_ALPINE_KEYPAIR = "-----BEGIN RSA PRIVATE KEY-----\nMIIEogIBAAKCAQEAwO...\n-----END RSA PRIVATE KEY-----"
 
 def create_repository(session, base_url: str, repo: dict) -> bool:
     repo_type = repo.get("type", "").lower()
@@ -37,7 +31,6 @@ def _repo_exists(session, base_url: str, name: str) -> bool:
     return any(r.get("name") == name for r in resp.json())
 
 def _alpine_signing_section(repo: dict) -> dict:
-    # Reads from YAML; if not found, uses the default key.
     keypair = repo.get("signing_keypair", DEFAULT_ALPINE_KEYPAIR)
     passphrase = repo.get("signing_passphrase", "")
     return {
@@ -59,7 +52,6 @@ def _create_hosted(session, base_url: str, repo: dict) -> bool:
             "strictContentTypeValidation": repo.get("strict_content", True),
             "writePolicy": repo.get("write_policy", "allow_once"),
         },
-        # 🔥 Alpine requires signing even for Hosted deployments.
         "alpineSigning": _alpine_signing_section(repo),
     }
     resp = session.post(url, json=payload)
@@ -95,7 +87,6 @@ def _create_proxy(session, base_url: str, repo: dict) -> bool:
             "blocked": False,
             "autoBlock": repo.get("auto_block", True),
         },
-        # 🔥 Alpine Proxy also requires AlpineSigning (PARAMETER keypair error)
         "alpineSigning": _alpine_signing_section(repo),
     }
     resp = session.post(url, json=payload)
@@ -121,6 +112,8 @@ def _create_group(session, base_url: str, repo: dict) -> bool:
         "group": {
             "memberNames": repo.get("members", []),
         },
+        # 🔥 Fix: Add alpineSigning for the group (even with the default key)
+        "alpineSigning": _alpine_signing_section(repo),
     }
     resp = session.post(url, json=payload)
     if resp.status_code in (200, 201, 204):
