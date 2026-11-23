@@ -83,7 +83,19 @@ def load_config_from_dir(config_dir: str) -> Dict[str, Any]:
         with file_path.open("r") as fh:
             data = yaml.safe_load(fh) or {}
         for key, value in data.items():
-            if key in merged:
+            if key == "repositories":
+                if not isinstance(value, dict):
+                    logger.error(f"Invalid 'repositories' section in '{file_path.name}': expected a mapping.")
+                    sys.exit(1)
+                repo_configs = merged.setdefault("repositories", {})
+                for fmt, repos in value.items():
+                    if not isinstance(repos, list):
+                        logger.error(
+                            f"Invalid '{fmt}' repositories in '{file_path.name}': expected a list."
+                        )
+                        sys.exit(1)
+                    repo_configs.setdefault(fmt, []).extend(repos)
+            elif key in merged:
                 if isinstance(merged[key], dict) and isinstance(value, dict):
                     merged[key].update(value)
                 elif isinstance(merged[key], list) and isinstance(value, list):
