@@ -1,10 +1,5 @@
 repositories:
   gitlfs:
-    - name: "gitlfs-proxy-github"
-      type: "proxy"
-      blob_store: "gitlfs-blob"
-      remote_url: "https://github.com"
-      
     - name: "gitlfs-hosted-private"
       type: "hosted"
       blob_store: "gitlfs-blob"

@@ -1,11 +1,12 @@
 """Validation must reject bad configuration before contacting Nexus."""
 
+import importlib
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from config_validation import validate_config
+from config_validation import SUPPORTED_REPOSITORY_TYPES, validate_config
 from main import FORMAT_MODULE_MAP, load_config_from_dir, main
 
 
@@ -33,6 +34,47 @@ class ValidateConfigTests(unittest.TestCase):
 
     def test_valid_configuration(self):
         self.assertEqual(self.errors(), [])
+
+    def test_gitlfs_hosted_is_supported(self):
+        self.config["repositories"] = {
+            "gitlfs": [{"name": "gitlfs-hosted", "type": "hosted", "blob_store": "storage"}]
+        }
+        self.assertEqual(self.errors(), [])
+
+    def test_gitlfs_proxy_and_group_are_rejected(self):
+        for repo_type in ("proxy", "group"):
+            with self.subTest(repo_type=repo_type):
+                self.config["repositories"] = {
+                    "gitlfs": [{"name": "gitlfs-bad", "type": repo_type}]
+                }
+                errors = " ".join(self.errors())
+                self.assertIn(f"unsupported type '{repo_type}' for format 'gitlfs'", errors)
+                self.assertIn("supported: hosted", errors)
+
+    def test_apt_group_is_rejected(self):
+        self.config["repositories"]["apt"] = [{
+            "name": "apt-group", "type": "group", "members": ["apt-proxy"]
+        }]
+        self.assertIn("unsupported type 'group' for format 'apt'", " ".join(self.errors()))
+
+    def test_conda_only_supports_proxy(self):
+        for repo_type in ("hosted", "group"):
+            with self.subTest(repo_type=repo_type):
+                self.config["repositories"] = {
+                    "conda": [{"name": "conda-bad", "type": repo_type}]
+                }
+                self.assertIn(f"unsupported type '{repo_type}' for format 'conda'", " ".join(self.errors()))
+
+    def test_capability_registry_matches_module_handlers(self):
+        self.assertEqual(set(SUPPORTED_REPOSITORY_TYPES), set(FORMAT_MODULE_MAP))
+        for fmt, module_name in FORMAT_MODULE_MAP.items():
+            with self.subTest(format=fmt):
+                module = importlib.import_module(f"modules.{module_name}")
+                available = {
+                    repo_type for repo_type in ("hosted", "proxy", "group")
+                    if callable(getattr(module, f"_create_{repo_type}", None))
+                }
+                self.assertEqual(SUPPORTED_REPOSITORY_TYPES[fmt], available)
 
     def test_rejects_duplicate_blob_stores(self):
         self.config["blobs"].append({"name": "storage"})
@@ -86,8 +128,8 @@ class ValidateConfigTests(unittest.TestCase):
         self.assertIn("remote_url", " ".join(self.errors()))
 
     def test_rejects_group_without_valid_members(self):
-        self.config["repositories"]["apt"][0] = {
-            "name": "all", "type": "group", "members": ["", "ubuntu"]
+        self.config["repositories"] = {
+            "raw": [{"name": "all", "type": "group", "members": ["", "ubuntu"]}]
         }
         self.assertIn(".members", " ".join(self.errors()))
 
@@ -150,6 +192,27 @@ class ValidateBeforeProvisioningTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as exit_ctx:
             load_config_from_dir(str(self.config_dir))
         self.assertEqual(exit_ctx.exception.code, 1)
+
+    def test_unsupported_gitlfs_stops_before_session_creation(self):
+        self.write(
+            "00-nexus.yml",
+            "nexus:\n  url: http://localhost:8081\n  username: test\n  password: test\n",
+        )
+        self.write(
+            "10-gitlfs.yml",
+            "repositories:\n  gitlfs:\n    - name: gitlfs-proxy\n      type: proxy\n"
+            "      remote_url: https://github.com\n",
+        )
+        for options in ([], ["--dry-run"]):
+            with self.subTest(options=options), \
+                    patch("sys.argv", ["main.py", "--config-dir", str(self.config_dir)] + options), \
+                    patch("main.build_session") as build_session, \
+                    patch("main.verify_connection") as verify_connection:
+                with self.assertRaises(SystemExit) as exit_ctx:
+                    main()
+                self.assertEqual(exit_ctx.exception.code, 1)
+                build_session.assert_not_called()
+                verify_connection.assert_not_called()
 
     def test_invalid_config_stops_before_session_creation(self):
         self.write("00-nexus.yml", "nexus:\n  url: http://localhost:8081\n")

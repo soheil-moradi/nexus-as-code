@@ -7,7 +7,34 @@ API schemas are intentionally outside this module's scope.
 from urllib.parse import urlsplit
 
 
-REPOSITORY_TYPES = {"hosted", "proxy", "group"}
+REPOSITORY_TYPES = frozenset({"hosted", "proxy", "group"})
+# Supported by the provisioning handlers in modules/*.py, not a claim about
+# availability in every Nexus release or license. Keep this in sync with the
+# module implementations; tests check the handler functions for consistency.
+SUPPORTED_REPOSITORY_TYPES = {
+    "alpine": REPOSITORY_TYPES,
+    "ansible": REPOSITORY_TYPES,
+    "apt": frozenset({"hosted", "proxy"}),
+    "cargo": REPOSITORY_TYPES,
+    "cocoapods": REPOSITORY_TYPES,
+    "conan": REPOSITORY_TYPES,
+    "conda": frozenset({"proxy"}),
+    "docker": REPOSITORY_TYPES,
+    "gitlfs": frozenset({"hosted"}),
+    "go": REPOSITORY_TYPES,
+    "helm": REPOSITORY_TYPES,
+    "maven": REPOSITORY_TYPES,
+    "npm": REPOSITORY_TYPES,
+    "nuget": REPOSITORY_TYPES,
+    "p2": REPOSITORY_TYPES,
+    "pypi": REPOSITORY_TYPES,
+    "r": REPOSITORY_TYPES,
+    "raw": REPOSITORY_TYPES,
+    "rubygems": REPOSITORY_TYPES,
+    "swift": REPOSITORY_TYPES,
+    "terraform": REPOSITORY_TYPES,
+    "yum": REPOSITORY_TYPES,
+}
 BLOB_TYPES = {"file", "s3"}
 
 
@@ -100,6 +127,8 @@ def validate_config(config, formats):
             location = f"repositories.{fmt}"
             if not isinstance(fmt, str) or fmt not in formats:
                 errors.append(f"{location}: unknown repository format")
+            elif fmt not in SUPPORTED_REPOSITORY_TYPES:
+                errors.append(f"{location}: no declared repository type capabilities")
             if not isinstance(entries, list):
                 errors.append(f"{location}: expected a list")
                 continue
@@ -121,6 +150,12 @@ def validate_config(config, formats):
                 if repo_type is not None:
                     if repo_type.lower() not in REPOSITORY_TYPES:
                         errors.append(f"{item_location}.type: expected hosted, proxy or group")
+                    elif fmt in SUPPORTED_REPOSITORY_TYPES and repo_type.lower() not in SUPPORTED_REPOSITORY_TYPES[fmt]:
+                        allowed = ", ".join(sorted(SUPPORTED_REPOSITORY_TYPES[fmt]))
+                        errors.append(
+                            f"{item_location}.type: unsupported type '{repo_type}' "
+                            f"for format '{fmt}' (supported: {allowed})"
+                        )
                     elif repo_type.lower() == "proxy":
                         _url(repo, "remote_url", item_location, errors)
                     elif repo_type.lower() == "group":
