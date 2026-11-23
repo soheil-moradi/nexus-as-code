@@ -28,9 +28,9 @@
 - ✅ **Blob Store Validation**: Automatically checks if a blob store exists before creating a repository.
 - ✅ **Docker Path-Based Routing Fix**: Automatically handles `subdomain: null` for proper Path-Based Routing.
 - ✅ Supports **File**, **AWS S3**, and **MinIO** Blob Stores.
-- ✅ **Dry-Run Mode**: Preview all changes without applying them.
+- ✅ **Dry-Run Mode**: Validate locally and show planned actions without calling Nexus.
 - ✅ **Debug Logging**: Detailed logs for troubleshooting.
-- ✅ Fully **Stateless** and CI/CD friendly.
+- ✅ **Create-only** provisioning with safety checks and non-zero exit codes on failures.
 
 ---
 
@@ -69,7 +69,11 @@
 nexus-as-code/
 ├── main.py                 # Core orchestrator
 ├── blobs.py                # Blob Store management
+├── config_validation.py    # Validate YAML and repository format capabilities
+├── config_secrets.py       # Resolve environment references
+├── nexus_cleaner.py        # Preview-first selective, managed, and full cleanup
 ├── requirements.txt        # Python dependencies
+├── tests/                  # Local unit and mocked REST tests
 ├── README.md               # This file
 ├── modules/                # Format-specific modules (22 total)
 │   ├── __init__.py
@@ -95,7 +99,7 @@ nexus-as-code/
 │   ├── alpine.py           # With AlpineSigning
 │   └── ansible.py          # Format name: ansiblegalaxy
 └── config.d/               # Modular configuration files
-    ├── example-00-nexus.yml  # Example connection details (commit this)
+    ├── 00-nexus.yml          # Tracked sample; do not put secrets here
     ├── 10-blobs-common.yml   # Blob Store definitions
     ├── 20-repos-npm.yml
     ├── 21-repos-docker.yml
@@ -103,7 +107,7 @@ nexus-as-code/
     └── ... (up to 22 separate files)
 ```
 
-> **Note:** All `.yml`/`.yaml` files in `config.d/` are ignored by Git by default. Only `example-*.yml` files are committed. See [Security](#security) section.
+> **Note:** `config.d/*.yml` files in this repository are tracked. Keep real credentials and internal configuration out of your public Git history. See [Security](#security) below.
 
 ---
 
@@ -112,8 +116,8 @@ nexus-as-code/
 ### 1. Prerequisites
 
 - Python 3.8 or higher
-- Access to Nexus Repository Manager 3 (version 3.20 or higher)
-- Admin credentials or token with appropriate permissions
+- Access to a compatible Nexus Repository 3 instance
+- A Nexus account with sufficient REST API permissions (HTTP Basic authentication)
 
 ### 2. Clone & Install
 
@@ -125,27 +129,42 @@ pip install -r requirements.txt
 
 ### 3. Configure Nexus Connection
 
-Copy the example config and edit it:
+Keep private settings outside the Git checkout. Copy the example configs to a
+local directory and edit the Nexus URL (use Vim or your preferred editor):
 
 ```bash
-cp config.d/example-00-nexus.yml config.d/00-nexus.yml
+mkdir -p "$HOME/.config"
+cp -a config.d "$HOME/.config/nexus-as-code"
+vim "$HOME/.config/nexus-as-code/00-nexus.yml"
 ```
-
-Edit `config.d/00-nexus.yml` with your Nexus details:
 
 ```yaml
 nexus:
-  url: "https://nexus.example.com"   # or http://localhost:8081
-  username: "user"
-  password: "password"
+  url: "https://nexus.example.com"
 ```
+
+Provide Nexus credentials through environment variables (they override YAML
+values independently). For an interactive Bash session, avoid putting the
+password into shell history:
+
+```bash
+export NEXUS_USERNAME="your-nexus-user"
+read -rsp "Nexus password: " NEXUS_PASSWORD; echo
+export NEXUS_PASSWORD
+```
+
+Alternatively, `.env.example` documents the variable names; `.env` is ignored
+by Git but is **not automatically loaded** by this tool. For backwards
+compatibility, `nexus.username` and `nexus.password` in YAML still work, but
+placing real credentials in tracked files is discouraged. An explicitly set
+empty environment variable is invalid; it does not fall back to YAML.
 
 ### 4. Dry-Run (Preview)
 
 Preview what the tool will do without making any changes:
 
 ```bash
-python main.py --dry-run
+python main.py --config-dir "$HOME/.config/nexus-as-code" --dry-run
 ```
 
 ### 5. Apply Configuration
@@ -153,8 +172,16 @@ python main.py --dry-run
 Apply the configuration and provision everything:
 
 ```bash
-python main.py
+python main.py --config-dir "$HOME/.config/nexus-as-code"
 ```
+
+**Provisioning semantics:** Existing blob stores/repositories are skipped; this
+is not a full state reconciliation engine. A partially successful run may have
+created resources before a later failure. Correct the cause and run again.
+`--dry-run` validates local configuration and handler availability without
+contacting Nexus; its count means **planned**, not successful API creations.
+Read-only GET requests use bounded timeouts and limited retries; POST/DELETE
+requests are **not** automatically retried after potentially reaching Nexus.
 
 ---
 
@@ -177,8 +204,7 @@ python main.py
 ```yaml
 nexus:
   url: "https://nexus.example.com"
-  username: "user"
-  password: "password"
+  # username and password are supplied via NEXUS_USERNAME / NEXUS_PASSWORD.
 ```
 
 ### 2. Defining Blob Stores (`10-blobs-common.yml`)
@@ -201,8 +227,8 @@ blobs:
     type: "s3"
     bucket: "my-nexus-bucket"
     region: "us-east-1"
-    access_key_id: "AKIAIOSFODNN7EXAMPLE"
-    secret_access_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    access_key_id: "${ENV:AWS_S3_ACCESS_KEY_ID}"
+    secret_access_key: "${ENV:AWS_S3_SECRET_ACCESS_KEY}"
     prefix: "nexus/blobs"
     encryption: "s3ManagedEncryption"
 ```
@@ -214,8 +240,8 @@ blobs:
     s3_provider: "minio"
     bucket: "nexus-artifacts"
     endpoint: "http://minio.example.com:9000"
-    access_key_id: "minioadmin"
-    secret_access_key: "minioadmin"
+    access_key_id: "${ENV:MINIO_ACCESS_KEY_ID}"
+    secret_access_key: "${ENV:MINIO_SECRET_ACCESS_KEY}"
     force_path_style: true
 ```
 
@@ -280,14 +306,14 @@ repositories:
 | Format | Special Settings |
 | :--- | :--- |
 | **Docker** | `connector: path` or `port`; Groups only support `path`. |
-| **APT** | Requires `distribution` (e.g., `jammy`); Groups are not supported. |
+| **APT** | Hosted requires explicit `distribution` and signing key. Proxy supports `distribution` or blank for multi-distribution; `enforce_distribution` defaults to false. Groups are not supported. |
 | **Maven** | Requires `version_policy` and `layout_policy`. |
 | **Yum** | Supports `repodata_depth` and `deploy_policy`. |
 | **NuGet** | Supports `feed_version` (V2 or V3). |
 | **Conan** | Supports `forge_url`. |
 | **Terraform** | Supports `package_type` (MODULE or PROVIDER). |
 | **Alpine** | Requires `signing_keypair` and `signing_passphrase` for Proxy/Hosted. |
-| **Git LFS** | **Hosted only** (Proxy/Group are not supported by Nexus). |
+| **Git LFS** | **Hosted only** in this tool. Proxy/Group are intentionally disabled. |
 
 ---
 
@@ -304,8 +330,11 @@ repositories:
 ### 3. Docker Path-Based Routing not showing in UI
 - **Solution:** The tool automatically sends `subdomain: null`. Ensure your Nexus `Base URL` is correctly configured in the Nexus Admin UI.
 
-### 4. 404 Errors for Ansible or Git LFS
-- **Solution:** These formats may not be supported in your Nexus edition (Community vs. Pro). The modules are designed to log a Warning and skip them gracefully without failing the entire run.
+### 4. Unsupported endpoints or Nexus editions
+- **Cause:** Nexus REST APIs and available formats vary with version and edition.
+- **Solution:** Compare the payload with the instance's `/service/rest/swagger.json`.
+  The tool reports failures and exits non-zero; it does not silently ignore them.
+  The provided tests exercise generated HTTP requests with mocks, **not** live Nexus compatibility.
 
 ### 5. Config File Conflicts
 - If the `nexus` key appears in multiple files, the **last file** (alphabetically) takes precedence. To avoid confusion, keep `nexus` in only one file (e.g., `00-nexus.yml`).
@@ -314,10 +343,76 @@ repositories:
 
 ## 🔐 Security
 
-**All YAML files inside `config.d/` (except `example-*.yml`) are ignored by Git** via the `.gitignore` file.  
-This prevents accidentally committing sensitive credentials (passwords, tokens, URLs) to your repository.
+- `config.d/` contains **tracked** example YAML files. `.gitignore` cannot protect
+  an already-tracked file; never add real passwords, tokens, or private company
+  URLs to these files. Use an external `--config-dir` for private configuration.
+- `.env` and `.env.*` are ignored, except `.env.example`. Real environment
+  files must be protected by file permissions and must not be committed.
+- `NEXUS_USERNAME` and `NEXUS_PASSWORD` override the matching YAML fields.
+  Environment variables are not a secret manager; use your platform’s
+  approved secret-handling mechanism when operating this tool. Credentials are masked in CLI log output when they appear in
+  messages, including exception text, but this is not a substitute for keeping
+  secrets out of source control and other tooling logs. Raw Nexus HTTP error
+  response bodies are deliberately not logged.
+- If any real secret was committed previously, revoke or rotate it. Adding
+  `.gitignore` or switching to environment variables does not erase Git history.
+- Use an exact `${ENV:VARIABLE_NAME}` value in any YAML scalar that needs to be
+  supplied from the environment (such as S3 credentials or an APT signing key).
+  Referenced variables must exist and be non-empty. Partial string expansion
+  is intentionally unsupported and causes validation failure. Avoid storing
+  actual private keys or signing passphrases in public YAML files.
+- HTTP(S) endpoints are validated before provisioning. `NEXUS_USERNAME` and
+  `NEXUS_PASSWORD` have precedence over YAML values, independently per field.
 
-To share configuration templates, use `example-*.yml` files (e.g., `example-00-nexus.yml`).
+
+---
+
+## 🧹 Preview-first cleanup
+
+`nexus_cleaner.py` provides three modes: **selective** (exact configured names),
+**managed** (all configured resources currently present on Nexus), and **full**
+(all resources returned by the Nexus API, including those not in local YAML).
+The default action in **every mode** is a read-only preview: no DELETE requests.
+The `default` blob store is **always excluded/protected**; full mode therefore
+removes all repositories and all *deletable non-default* blob stores, **not** the
+Nexus `default` blob store.
+
+```bash
+# Selective: plan one configured repository
+python3 nexus_cleaner.py --repository npm-proxy-official
+
+# Managed: plan all configured repositories and non-default blobs
+python3 nexus_cleaner.py --managed
+
+# Full: plan ALL Nexus repositories and non-default blobs, including unmanaged
+python3 nexus_cleaner.py --all
+```
+
+Real deletion requires `--apply` and `--confirm-target` set to the **exact**
+configured Nexus URL; `--managed` additionally requires `--confirm-phrase
+DELETE-MANAGED`, and `--all` requires `--confirm-phrase DELETE-ALL`.
+These safety gates are deliberate: **full cleanup can permanently remove
+unrelated, manually created repositories and cached or hosted artifacts**.
+
+```bash
+# DESTRUCTIVE: do not execute without reviewing the preview and backups.
+python3 nexus_cleaner.py --all --apply \
+  --confirm-target https://nexus.example.com \
+  --confirm-phrase DELETE-ALL
+```
+
+Group dependencies are evaluated using live Nexus data, with parent Groups
+removed before their members. A selected blob store cannot be deleted while a
+surviving repository still uses it. The tool stops on inspection or API errors,
+but does not provide transactional rollback or protection against concurrent
+Nexus changes. Keep backups, restrict permissions, and test on a disposable
+Nexus instance first.
+
+The supplied GitHub Actions workflow runs lint, compilation, tests, and an
+**offline** sample dry-run on pushes and pull requests. It never connects to
+Nexus and does not deploy or modify infrastructure.
+
+See [Operations and safety](docs/OPERATIONS.md) for detailed usage and limitations.
 
 ---
 

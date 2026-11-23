@@ -46,7 +46,7 @@ def _create_hosted(session, base_url: str, repo: dict) -> bool:
     if resp.status_code in (200, 201, 204):
         logger.info(f"Created Raw hosted repo '{name}'.")
         return True
-    logger.error(f"Failed: {resp.status_code} {resp.text}")
+    logger.error(f"Failed: {resp.status_code}")
     return False
 
 def _create_proxy(session, base_url: str, repo: dict) -> bool:
@@ -80,7 +80,7 @@ def _create_proxy(session, base_url: str, repo: dict) -> bool:
     if resp.status_code in (200, 201, 204):
         logger.info(f"Created Raw proxy repo '{name}'.")
         return True
-    logger.error(f"Failed: {resp.status_code} {resp.text}")
+    logger.error(f"Failed: {resp.status_code}")
     return False
 
 def _create_group(session, base_url: str, repo: dict) -> bool:
@@ -104,5 +104,5 @@ def _create_group(session, base_url: str, repo: dict) -> bool:
     if resp.status_code in (200, 201, 204):
         logger.info(f"Created Raw group repo '{name}'.")
         return True
-    logger.error(f"Failed: {resp.status_code} {resp.text}")
+    logger.error(f"Failed: {resp.status_code}")
     return False
