@@ -94,36 +94,81 @@ false; setting it true requires an explicit distribution. APT Group is unsupport
 Re-signing, pass-through metadata and actual `apt update` / `apt install`
 behavior require verification against your chosen Nexus installation.
 
-## Safe cleaner
+## Cleaner: selective, managed, and full cleanup
 
-`nexus_cleaner.py` is a separate, intentionally destructive utility.
-It defaults to preview; only explicit names that are present in your chosen
-YAML config are accepted. It does **not** expose a delete-all option.
+`nexus_cleaner.py` is a **destructive administrative utility** with three
+explicit modes. Preview is the default for *all* modes and performs reads only.
+No mode makes DELETE requests without `--apply` and a matching
+`--confirm-target` URL. There is no `--password` CLI argument; use
+`NEXUS_USERNAME`/`NEXUS_PASSWORD` or private configuration.
+
+| Mode | Selection | Additional confirmation for `--apply` |
+| --- | --- | --- |
+| Selective (default) | Explicit `--repository NAME` / `--blobstore NAME`, both must appear in YAML and exist remotely | None beyond exact target URL |
+| `--managed` | All YAML-defined repositories and non-default blob stores that currently exist on Nexus | `--confirm-phrase DELETE-MANAGED` |
+| `--all` | **All** Nexus repositories and **all non-default** blob stores, whether in YAML or not | `--confirm-phrase DELETE-ALL` |
+
+**The `default` blob store is always protected**, including in full mode.
+`--managed` and `--all` cannot be combined with named-resource selection or
+with each other. Missing managed resources are skipped so partial cleanup can
+be resumed. Full cleanup validates connection settings but doesn't require
+locally configured repositories to match the remote inventory.
+
+### Preview commands (non-destructive)
 
 ```bash
 python3 nexus_cleaner.py --config-dir "$HOME/.config/nexus-as-code" \
   --repository npm-proxy-official
+python3 nexus_cleaner.py --config-dir "$HOME/.config/nexus-as-code" --managed
+python3 nexus_cleaner.py --config-dir "$HOME/.config/nexus-as-code" --all
+```
 
-# Only after inspecting the preview:
+### Deletion commands (destructive; examples only)
+
+**Never run these against a production Nexus without a verified backup and
+reviewing the corresponding preview.** The confirmed target must exactly match
+the URL from the selected private `00-nexus.yml` (without a trailing slash).
+
+```bash
+# Delete a single configured repository
 python3 nexus_cleaner.py --config-dir "$HOME/.config/nexus-as-code" \
   --repository npm-proxy-official --apply \
   --confirm-target https://nexus.example.com
+
+# Delete every existing, configured repository and non-default blob store
+python3 nexus_cleaner.py --config-dir "$HOME/.config/nexus-as-code" \
+  --managed --apply --confirm-target https://nexus.example.com \
+  --confirm-phrase DELETE-MANAGED
+
+# Delete ALL Nexus repositories and non-default blob stores, including unmanaged
+python3 nexus_cleaner.py --config-dir "$HOME/.config/nexus-as-code" \
+  --all --apply --confirm-target https://nexus.example.com \
+  --confirm-phrase DELETE-ALL
 ```
 
-A blob store requires its own `--blobstore NAME` selection; `default` is always
-protected. Before deleting a blob store the tool looks at the detailed storage
-configuration for **every surviving repository**, and refuses deletion if a
-mapping is unknown or still in use. Before deleting a selected repository it
-also inspects surviving Groups for references to that name. Failure to read
-these dependencies stops the operation. The checks are not an atomic snapshot:
-concurrent modifications made by other admins cannot be prevented by the
-script. Avoid concurrent administrative changes during deletion. Failed
-DELETE requests are **not** automatically retried. Cleanup is irreversible;
-restore requires Nexus backups and is not implemented here.
+The cleaner reads Nexus inventories for both repositories and blob stores. It
+checks live membership of surviving Groups before deleting selected members;
+selected nested Groups are ordered parents-first. Before deleting selected blob
+stores, it checks storage mappings on **all surviving repositories**, including
+unmanaged ones. Unknown dependencies or failed inspection **stop the cleanup**.
+All repository DELETE operations are performed before blob store DELETEs.
+Each DELETE is non-retried; the first error aborts execution, with any already
+deleted resources **not** restored. These checks cannot prevent races with
+other administrators or guarantee a consistent full inventory with insufficient
+permissions. Do not perform concurrent administrative changes. Full cleanup
+can permanently destroy artifacts in hosted stores as well as cached artifacts.
+Nexus backup/restore is outside this tool's scope.
 
-Legacy CLI options such as `--password` and a broad `--confirm` deletion were
-removed for safety. Set `NEXUS_USERNAME` and `NEXUS_PASSWORD` or supply private
-YAML credentials only from outside the public checkout.
+Existing format support and Create-only provisioning are unchanged. Git LFS
+remains Hosted-only. The client-side APT installer is a separate project.
+
+## GitHub Actions scope
+
+`.github/workflows/python-ci.yml` runs Python 3.10 and 3.12 checks on pushes
+and pull requests: critical Flake8 diagnostics, Python compilation, local
+unittest discovery, and an **offline** `main.py --dry-run`. The workflow uses
+read-only repository permissions and does **not** provision or clean a Nexus
+instance, consume Nexus credentials, or implement application deployment.
 
 ## Running local tests
 
