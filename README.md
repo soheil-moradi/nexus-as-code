@@ -95,7 +95,7 @@ nexus-as-code/
 │   ├── alpine.py           # With AlpineSigning
 │   └── ansible.py          # Format name: ansiblegalaxy
 └── config.d/               # Modular configuration files
-    ├── example-00-nexus.yml  # Example connection details (commit this)
+    ├── 00-nexus.yml          # Tracked sample; do not put secrets here
     ├── 10-blobs-common.yml   # Blob Store definitions
     ├── 20-repos-npm.yml
     ├── 21-repos-docker.yml
@@ -103,7 +103,7 @@ nexus-as-code/
     └── ... (up to 22 separate files)
 ```
 
-> **Note:** All `.yml`/`.yaml` files in `config.d/` are ignored by Git by default. Only `example-*.yml` files are committed. See [Security](#security) section.
+> **Note:** `config.d/*.yml` files in this repository are tracked. Keep real credentials and internal configuration out of your public Git history. See [Security](#security) below.
 
 ---
 
@@ -125,27 +125,42 @@ pip install -r requirements.txt
 
 ### 3. Configure Nexus Connection
 
-Copy the example config and edit it:
+Keep private settings outside the Git checkout. Copy the example configs to a
+local directory and edit the Nexus URL (use Vim or your preferred editor):
 
 ```bash
-cp config.d/example-00-nexus.yml config.d/00-nexus.yml
+mkdir -p "$HOME/.config"
+cp -a config.d "$HOME/.config/nexus-as-code"
+vim "$HOME/.config/nexus-as-code/00-nexus.yml"
 ```
-
-Edit `config.d/00-nexus.yml` with your Nexus details:
 
 ```yaml
 nexus:
-  url: "https://nexus.example.com"   # or http://localhost:8081
-  username: "user"
-  password: "password"
+  url: "https://nexus.example.com"
 ```
+
+Provide Nexus credentials through environment variables (they override YAML
+values independently). For an interactive Bash session, avoid putting the
+password into shell history:
+
+```bash
+export NEXUS_USERNAME="your-nexus-user"
+read -rsp "Nexus password: " NEXUS_PASSWORD; echo
+export NEXUS_PASSWORD
+```
+
+Alternatively, `.env.example` documents the variable names; `.env` is ignored
+by Git but is **not automatically loaded** by this tool. For backwards
+compatibility, `nexus.username` and `nexus.password` in YAML still work, but
+placing real credentials in tracked files is discouraged. An explicitly set
+empty environment variable is invalid; it does not fall back to YAML.
 
 ### 4. Dry-Run (Preview)
 
 Preview what the tool will do without making any changes:
 
 ```bash
-python main.py --dry-run
+python main.py --config-dir "$HOME/.config/nexus-as-code" --dry-run
 ```
 
 ### 5. Apply Configuration
@@ -153,7 +168,7 @@ python main.py --dry-run
 Apply the configuration and provision everything:
 
 ```bash
-python main.py
+python main.py --config-dir "$HOME/.config/nexus-as-code"
 ```
 
 ---
@@ -177,8 +192,7 @@ python main.py
 ```yaml
 nexus:
   url: "https://nexus.example.com"
-  username: "user"
-  password: "password"
+  # username and password are supplied via NEXUS_USERNAME / NEXUS_PASSWORD.
 ```
 
 ### 2. Defining Blob Stores (`10-blobs-common.yml`)
@@ -314,10 +328,18 @@ repositories:
 
 ## 🔐 Security
 
-**All YAML files inside `config.d/` (except `example-*.yml`) are ignored by Git** via the `.gitignore` file.  
-This prevents accidentally committing sensitive credentials (passwords, tokens, URLs) to your repository.
-
-To share configuration templates, use `example-*.yml` files (e.g., `example-00-nexus.yml`).
+- `config.d/` contains **tracked** example YAML files. `.gitignore` cannot protect
+  an already-tracked file; never add real passwords, tokens, or private company
+  URLs to these files. Use an external `--config-dir` for private configuration.
+- `.env` and `.env.*` are ignored, except `.env.example`. Real environment
+  files must be protected by file permissions and must not be committed.
+- `NEXUS_USERNAME` and `NEXUS_PASSWORD` override the matching YAML fields.
+  Environment variables are not a secret manager; prefer CI secret injection
+  in automation. Credentials are masked in CLI log output when they appear in
+  messages, including exception text, but this is not a substitute for keeping
+  secrets out of source control and other tooling logs.
+- If any real secret was committed previously, revoke or rotate it. Adding
+  `.gitignore` or switching to environment variables does not erase Git history.
 
 ---
 

@@ -19,6 +19,7 @@ from config_validation import validate_config
 #  Dynamic module loading
 # ============================================================
 import importlib
+import os
 
 FORMAT_MODULE_MAP = {
     "apt":       "apt",
@@ -65,6 +66,51 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("main")
+
+
+class CredentialRedactingFormatter(logging.Formatter):
+    """Mask credentials even when included in exception tracebacks or HTTP errors."""
+
+    def __init__(self, formatter, values):
+        super().__init__()
+        self.formatter = formatter
+        self.values = sorted(
+            {value for value in values if isinstance(value, str) and value},
+            key=len, reverse=True,
+        )
+
+    def format(self, record):
+        output = self.formatter.format(record)
+        for value in self.values:
+            output = output.replace(value, "[REDACTED]")
+        return output
+
+
+def configure_log_redaction(values):
+    """Apply redaction to CLI logging handlers without changing their formatting."""
+    for handler in logging.getLogger().handlers:
+        formatter = handler.formatter or logging.Formatter()
+        if isinstance(formatter, CredentialRedactingFormatter):
+            formatter = formatter.formatter
+        handler.setFormatter(CredentialRedactingFormatter(formatter, values))
+
+
+def resolve_nexus_credentials(config):
+    """Environment overrides YAML per field; explicit empty values remain invalid."""
+    nexus = config.get("nexus")
+    if not isinstance(nexus, dict):
+        return config, []
+
+    resolved = dict(nexus)
+    secrets = [nexus.get("username"), nexus.get("password")]
+    for field, env_var in (("username", "NEXUS_USERNAME"), ("password", "NEXUS_PASSWORD")):
+        if env_var in os.environ:
+            resolved[field] = os.environ[env_var]
+            secrets.append(os.environ[env_var])
+
+    config = dict(config)
+    config["nexus"] = resolved
+    return config, secrets
 
 # ============================================================
 #  Config loading
@@ -298,6 +344,8 @@ def main() -> None:
         sys.exit(1)
 
     config = load_config_from_dir(args.config_dir)
+    config, sensitive_values = resolve_nexus_credentials(config)
+    configure_log_redaction(sensitive_values)
     validation_errors = validate_config(config, FORMAT_MODULE_MAP)
     if validation_errors:
         for error in validation_errors:
