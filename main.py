@@ -51,7 +51,8 @@ def load_module(format_name: str):
         return None
     try:
         return importlib.import_module(f"modules.{module_name}")
-    except ImportError:
+    except ImportError as exc:
+        logger.error("Cannot import handler for format '%s': %s", format_name, exc)
         return None
 
 # ============================================================
@@ -190,7 +191,13 @@ def provision_blobs(session, base_url: str, blob_list: list, dry_run: bool) -> t
             logger.info(f"[DRY-RUN] Would create {blob_type} blob store '{name}'.")
             ok += 1
             continue
-        if blobs.create_blob_store(session, base_url, blob):
+        try:
+            created = blobs.create_blob_store(session, base_url, blob)
+        except Exception:
+            logger.exception("Failed to provision blob store '%s'.", name)
+            failed += 1
+            continue
+        if created:
             ok += 1
         else:
             failed += 1
@@ -199,12 +206,21 @@ def provision_blobs(session, base_url: str, blob_list: list, dry_run: bool) -> t
 def provision_repositories(session, base_url: str, repo_cfg: dict, dry_run: bool) -> tuple:
     ok = failed = 0
     for fmt, repo_list in repo_cfg.items():
-        module = load_module(fmt)
-        if module is None:
-            logger.warning(f"No handler for format '{fmt}' – skipping.")
+        try:
+            module = load_module(fmt)
+        except Exception:
+            logger.exception("Cannot load handler for format '%s'.", fmt)
+            failed += len(repo_list)
             continue
-        if not hasattr(module, "create_repository"):
-            logger.warning(f"Module for '{fmt}' missing create_repository() – skipping.")
+        if module is None:
+            logger.error("No handler for format '%s'; %d repository/ies failed.", fmt, len(repo_list))
+            failed += len(repo_list)
+            continue
+        create_repository = getattr(module, "create_repository", None)
+        if not callable(create_repository):
+            logger.error("Handler for '%s' has no callable create_repository(); "
+                         "%d repository/ies failed.", fmt, len(repo_list))
+            failed += len(repo_list)
             continue
 
         for repo in repo_list:
@@ -212,19 +228,33 @@ def provision_repositories(session, base_url: str, repo_cfg: dict, dry_run: bool
             repo_type = repo.get("type", "?")
             blob_store = repo.get("blob_store", "default")
 
-            if not dry_run and not blob_store_exists(session, base_url, blob_store):
-                logger.error(f"Blob store '{blob_store}' not found – skipping repo '{name}'")
-                failed += 1
-                continue
+            if not dry_run:
+                try:
+                    exists = blob_store_exists(session, base_url, blob_store)
+                except Exception:
+                    logger.exception("Cannot check blob store '%s' for repository '%s'.", blob_store, name)
+                    failed += 1
+                    continue
+                if not exists:
+                    logger.error("Blob store '%s' not found – skipping repo '%s'", blob_store, name)
+                    failed += 1
+                    continue
 
             if dry_run:
                 logger.info(f"[DRY-RUN] Would create {fmt} {repo_type} repo '{name}'.")
                 ok += 1
                 continue
 
-            if module.create_repository(session, base_url, repo):
+            try:
+                created = create_repository(session, base_url, repo)
+            except Exception:
+                logger.exception("Failed to provision %s repository '%s'.", fmt, name)
+                failed += 1
+                continue
+            if created:
                 ok += 1
             else:
+                logger.error("Failed to provision %s repository '%s'.", fmt, name)
                 failed += 1
     return ok, failed
 
