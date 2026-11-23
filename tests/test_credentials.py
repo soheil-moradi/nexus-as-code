@@ -165,6 +165,49 @@ class CredentialLogRedactionTests(unittest.TestCase):
                 previous_handler.setFormatter(formatter)
             root.removeHandler(handler)
 
+    def test_short_credentials_do_not_corrupt_normal_log_messages(self):
+        formatter = CredentialRedactingFormatter(
+            logging.Formatter("%(message)s"), ["u", "p"]
+        )
+        message = (
+            "Cleanup refused: Deletion requires --confirm-target "
+            "matching the exact Nexus URL; repository 'owned'"
+        )
+        record = logging.makeLogRecord({"msg": message})
+        self.assertEqual(formatter.format(record), message)
+
+    def test_short_tokens_are_redacted_but_long_secrets_stay_masked(self):
+        formatter = CredentialRedactingFormatter(
+            logging.Formatter("%(message)s"), ["u", "p", "long-secret"]
+        )
+        record = logging.makeLogRecord({"msg": (
+            "username=u password=p Authorization=prefixlong-secretsuffix "
+            "repository=updater"
+        )})
+        self.assertEqual(
+            formatter.format(record),
+            "username=[REDACTED] password=[REDACTED] "
+            "Authorization=prefix[REDACTED]suffix repository=updater",
+        )
+
+    def test_short_credentials_in_exception_are_redacted(self):
+        formatter = CredentialRedactingFormatter(
+            logging.Formatter("%(levelname)s %(message)s"), ["u", "p"]
+        )
+        try:
+            raise RuntimeError("Login failed for user=u password=p")
+        except RuntimeError:
+            import sys
+            error_info = sys.exc_info()
+        record = logging.makeLogRecord({
+            "name": "main", "levelno": logging.ERROR,
+            "msg": "Cleanup refused: bad credentials", "exc_info": error_info,
+        })
+        output = formatter.format(record)
+        self.assertIn("Cleanup refused: bad credentials", output)
+        self.assertIn("user=[REDACTED] password=[REDACTED]", output)
+        self.assertNotIn("user=u password=p", output)
+
     def test_log_redaction_reconfiguration_replaces_previous_values(self):
         fmt = logging.Formatter("%(message)s")
         redacted = CredentialRedactingFormatter(fmt, ["old-secret"])

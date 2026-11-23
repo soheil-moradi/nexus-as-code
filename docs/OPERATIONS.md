@@ -48,6 +48,13 @@ blobs:
     secret_access_key: "${ENV:S3_SECRET_ACCESS_KEY}"
 ```
 
+Log messages and tracebacks mask configured credentials. Values shorter than
+four characters are masked only when they occur as separate tokens, to avoid
+mangling normal words (for example, a one-letter test username must not alter
+"repository"). Embedded occurrences of very short credentials cannot always be
+recognized unambiguously; use strong, longer passwords and avoid including
+secrets in URLs or log messages.
+
 Environment variables are inherited by child processes and may be visible to
 privileged local observers. Use an approved secret provider for high-security
 environments; this tool does not implement a separate secret manager. Never put

@@ -20,6 +20,7 @@ from config_validation import validate_config
 # ============================================================
 import importlib
 import os
+import re
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from config_secrets import resolve_environment_references
@@ -81,11 +82,21 @@ class CredentialRedactingFormatter(logging.Formatter):
             {value for value in values if isinstance(value, str) and value},
             key=len, reverse=True,
         )
+        # Short test credentials such as "u" and "p" must not corrupt ordinary
+        # log messages (e.g. "Cleanup refused" or "repository"). Match them
+        # only as standalone tokens; longer secrets remain substring-masked.
+        self.short_patterns = {
+            value: re.compile(r"(?<!\w)" + re.escape(value) + r"(?!\w)")
+            for value in self.values if len(value) < 4
+        }
 
     def format(self, record):
         output = self.formatter.format(record)
         for value in self.values:
-            output = output.replace(value, "[REDACTED]")
+            if value in self.short_patterns:
+                output = self.short_patterns[value].sub("[REDACTED]", output)
+            else:
+                output = output.replace(value, "[REDACTED]")
         return output
 
 
