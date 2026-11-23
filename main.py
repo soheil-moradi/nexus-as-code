@@ -13,6 +13,8 @@ from typing import Dict, Any
 import requests
 import yaml
 
+from config_validation import validate_config
+
 # ============================================================
 #  Dynamic module loading
 # ============================================================
@@ -67,6 +69,25 @@ logger = logging.getLogger("main")
 #  Config loading
 # ============================================================
 
+class UniqueKeysSafeLoader(yaml.SafeLoader):
+    """Use the safe YAML loader, but reject duplicate explicit mapping keys."""
+
+    def construct_mapping(self, node, deep=False):
+        seen = set()
+        for key_node, _ in node.value:
+            # YAML merge keys may legitimately be overridden explicitly.
+            if key_node.tag == "tag:yaml.org,2002:merge":
+                continue
+            key = self.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise yaml.constructor.ConstructorError(
+                    "while constructing a mapping", node.start_mark,
+                    "duplicate YAML mapping key", key_node.start_mark,
+                )
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
 def load_config_from_dir(config_dir: str) -> Dict[str, Any]:
     base_path = Path(config_dir)
     if not base_path.exists():
@@ -80,9 +101,30 @@ def load_config_from_dir(config_dir: str) -> Dict[str, Any]:
         sys.exit(1)
 
     for file_path in yaml_files:
-        with file_path.open("r") as fh:
-            data = yaml.safe_load(fh) or {}
+        try:
+            with file_path.open("r", encoding="utf-8") as fh:
+                data = yaml.load(fh, Loader=UniqueKeysSafeLoader)
+        except yaml.YAMLError as exc:
+            mark = getattr(exc, "problem_mark", None)
+            location = f" at line {mark.line + 1}" if mark is not None else ""
+            logger.error(f"Invalid YAML in '{file_path.name}'{location}.")
+            sys.exit(1)
+        except OSError as exc:
+            logger.error(f"Cannot read '{file_path.name}': {exc}")
+            sys.exit(1)
+        if not isinstance(data, dict):
+            logger.error(f"Invalid YAML in '{file_path.name}': expected a mapping.")
+            sys.exit(1)
         for key, value in data.items():
+            if key not in {"nexus", "blobs", "repositories"}:
+                logger.error(f"Unknown configuration section '{key}' in '{file_path.name}'.")
+                sys.exit(1)
+            if key == "nexus" and not isinstance(value, dict):
+                logger.error(f"Invalid 'nexus' section in '{file_path.name}': expected a mapping.")
+                sys.exit(1)
+            if key == "blobs" and not isinstance(value, list):
+                logger.error(f"Invalid 'blobs' section in '{file_path.name}': expected a list.")
+                sys.exit(1)
             if key == "repositories":
                 if not isinstance(value, dict):
                     logger.error(f"Invalid 'repositories' section in '{file_path.name}': expected a mapping.")
@@ -226,6 +268,11 @@ def main() -> None:
         sys.exit(1)
 
     config = load_config_from_dir(args.config_dir)
+    validation_errors = validate_config(config, FORMAT_MODULE_MAP)
+    if validation_errors:
+        for error in validation_errors:
+            logger.error(f"Invalid configuration: {error}")
+        sys.exit(1)
     nexus_cfg = config.get("nexus", {})
     base_url = nexus_cfg.get("url", "http://localhost:8081").rstrip("/")
 
