@@ -43,5 +43,5 @@ def _create_hosted(session, base_url: str, repo: dict) -> bool:
     if resp.status_code in (200, 201, 204):
         logger.info(f"Created Git LFS hosted repo '{name}'.")
         return True
-    logger.error(f"Failed: {resp.status_code} {resp.text}")
+    logger.error(f"Failed: {resp.status_code}")
     return False

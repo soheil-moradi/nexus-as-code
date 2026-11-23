@@ -39,7 +39,7 @@ def _create_file_blob(session, base_url: str, blob: dict) -> bool:
     if resp.status_code in (200, 201, 204):
         logger.info(f"Created file blob store '{name}'.")
         return True
-    logger.error(f"Failed to create file blob store '{name}': {resp.status_code} {resp.text}")
+    logger.error(f"Failed to create file blob store '{name}': {resp.status_code}")
     return False
 
 def _create_aws_s3_blob(session, base_url: str, blob: dict) -> bool:
@@ -86,7 +86,7 @@ def _create_aws_s3_blob(session, base_url: str, blob: dict) -> bool:
     if resp.status_code in (200, 201, 204):
         logger.info(f"Created AWS S3 blob store '{name}'.")
         return True
-    logger.error(f"Failed to create AWS S3 blob store '{name}': {resp.status_code} {resp.text}")
+    logger.error(f"Failed to create AWS S3 blob store '{name}': {resp.status_code}")
     return False
 
 def _create_minio_blob(session, base_url: str, blob: dict) -> bool:
@@ -123,5 +123,5 @@ def _create_minio_blob(session, base_url: str, blob: dict) -> bool:
     if resp.status_code in (200, 201, 204):
         logger.info(f"Created MinIO blob store '{name}' (endpoint: {endpoint}).")
         return True
-    logger.error(f"Failed to create MinIO blob store '{name}': {resp.status_code} {resp.text}")
+    logger.error(f"Failed to create MinIO blob store '{name}': {resp.status_code}")
     return False

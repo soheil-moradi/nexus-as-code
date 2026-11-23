@@ -58,6 +58,12 @@ class LoadConfigFromDirTests(unittest.TestCase):
             ["primary", "secondary"],
         )
 
+    def test_yaml_extensions_share_one_lexicographic_order(self):
+        self.write_config("01-second.yaml", "blobs:\n  - name: first\n")
+        self.write_config("02-third.yml", "blobs:\n  - name: second\n")
+        result = load_config_from_dir(str(self.config_dir))
+        self.assertEqual([item["name"] for item in result["blobs"]], ["first", "second"])
+
     def test_rejects_non_list_repository_definitions(self):
         self.write_config("20-apt.yml", "repositories:\n  apt: invalid\n")
 

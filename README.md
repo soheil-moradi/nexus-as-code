@@ -28,9 +28,9 @@
 - ✅ **Blob Store Validation**: Automatically checks if a blob store exists before creating a repository.
 - ✅ **Docker Path-Based Routing Fix**: Automatically handles `subdomain: null` for proper Path-Based Routing.
 - ✅ Supports **File**, **AWS S3**, and **MinIO** Blob Stores.
-- ✅ **Dry-Run Mode**: Preview all changes without applying them.
+- ✅ **Dry-Run Mode**: Validate locally and show planned actions without calling Nexus.
 - ✅ **Debug Logging**: Detailed logs for troubleshooting.
-- ✅ Fully **Stateless** and CI/CD friendly.
+- ✅ **Create-only** provisioning with safety checks and non-zero exit codes on failures.
 
 ---
 
@@ -69,7 +69,11 @@
 nexus-as-code/
 ├── main.py                 # Core orchestrator
 ├── blobs.py                # Blob Store management
+├── config_validation.py    # Validate YAML and repository format capabilities
+├── config_secrets.py       # Resolve environment references
+├── nexus_cleaner.py        # Explicit-name, preview-first cleanup
 ├── requirements.txt        # Python dependencies
+├── tests/                  # Local unit and mocked REST tests
 ├── README.md               # This file
 ├── modules/                # Format-specific modules (22 total)
 │   ├── __init__.py
@@ -112,8 +116,8 @@ nexus-as-code/
 ### 1. Prerequisites
 
 - Python 3.8 or higher
-- Access to Nexus Repository Manager 3 (version 3.20 or higher)
-- Admin credentials or token with appropriate permissions
+- Access to a compatible Nexus Repository 3 instance
+- A Nexus account with sufficient REST API permissions (HTTP Basic authentication)
 
 ### 2. Clone & Install
 
@@ -171,6 +175,14 @@ Apply the configuration and provision everything:
 python main.py --config-dir "$HOME/.config/nexus-as-code"
 ```
 
+**Provisioning semantics:** Existing blob stores/repositories are skipped; this
+is not a full state reconciliation engine. A partially successful run may have
+created resources before a later failure. Correct the cause and run again.
+`--dry-run` validates local configuration and handler availability without
+contacting Nexus; its count means **planned**, not successful API creations.
+Read-only GET requests use bounded timeouts and limited retries; POST/DELETE
+requests are **not** automatically retried after potentially reaching Nexus.
+
 ---
 
 ## 🛠️ Command-Line Options
@@ -215,8 +227,8 @@ blobs:
     type: "s3"
     bucket: "my-nexus-bucket"
     region: "us-east-1"
-    access_key_id: "AKIAIOSFODNN7EXAMPLE"
-    secret_access_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    access_key_id: "${ENV:AWS_S3_ACCESS_KEY_ID}"
+    secret_access_key: "${ENV:AWS_S3_SECRET_ACCESS_KEY}"
     prefix: "nexus/blobs"
     encryption: "s3ManagedEncryption"
 ```
@@ -228,8 +240,8 @@ blobs:
     s3_provider: "minio"
     bucket: "nexus-artifacts"
     endpoint: "http://minio.example.com:9000"
-    access_key_id: "minioadmin"
-    secret_access_key: "minioadmin"
+    access_key_id: "${ENV:MINIO_ACCESS_KEY_ID}"
+    secret_access_key: "${ENV:MINIO_SECRET_ACCESS_KEY}"
     force_path_style: true
 ```
 
@@ -294,14 +306,14 @@ repositories:
 | Format | Special Settings |
 | :--- | :--- |
 | **Docker** | `connector: path` or `port`; Groups only support `path`. |
-| **APT** | Requires `distribution` (e.g., `jammy`); Groups are not supported. |
+| **APT** | Hosted requires explicit `distribution` and signing key. Proxy supports `distribution` or blank for multi-distribution; `enforce_distribution` defaults to false. Groups are not supported. |
 | **Maven** | Requires `version_policy` and `layout_policy`. |
 | **Yum** | Supports `repodata_depth` and `deploy_policy`. |
 | **NuGet** | Supports `feed_version` (V2 or V3). |
 | **Conan** | Supports `forge_url`. |
 | **Terraform** | Supports `package_type` (MODULE or PROVIDER). |
 | **Alpine** | Requires `signing_keypair` and `signing_passphrase` for Proxy/Hosted. |
-| **Git LFS** | **Hosted only** (Proxy/Group are not supported by Nexus). |
+| **Git LFS** | **Hosted only** in this tool. Proxy/Group are intentionally disabled. |
 
 ---
 
@@ -318,8 +330,11 @@ repositories:
 ### 3. Docker Path-Based Routing not showing in UI
 - **Solution:** The tool automatically sends `subdomain: null`. Ensure your Nexus `Base URL` is correctly configured in the Nexus Admin UI.
 
-### 4. 404 Errors for Ansible or Git LFS
-- **Solution:** These formats may not be supported in your Nexus edition (Community vs. Pro). The modules are designed to log a Warning and skip them gracefully without failing the entire run.
+### 4. Unsupported endpoints or Nexus editions
+- **Cause:** Nexus REST APIs and available formats vary with version and edition.
+- **Solution:** Compare the payload with the instance's `/service/rest/swagger.json`.
+  The tool reports failures and exits non-zero; it does not silently ignore them.
+  The provided tests exercise generated HTTP requests with mocks, **not** live Nexus compatibility.
 
 ### 5. Config File Conflicts
 - If the `nexus` key appears in multiple files, the **last file** (alphabetically) takes precedence. To avoid confusion, keep `nexus` in only one file (e.g., `00-nexus.yml`).
@@ -334,12 +349,50 @@ repositories:
 - `.env` and `.env.*` are ignored, except `.env.example`. Real environment
   files must be protected by file permissions and must not be committed.
 - `NEXUS_USERNAME` and `NEXUS_PASSWORD` override the matching YAML fields.
-  Environment variables are not a secret manager; prefer CI secret injection
-  in automation. Credentials are masked in CLI log output when they appear in
+  Environment variables are not a secret manager; use your platform’s
+  approved secret-handling mechanism when operating this tool. Credentials are masked in CLI log output when they appear in
   messages, including exception text, but this is not a substitute for keeping
-  secrets out of source control and other tooling logs.
+  secrets out of source control and other tooling logs. Raw Nexus HTTP error
+  response bodies are deliberately not logged.
 - If any real secret was committed previously, revoke or rotate it. Adding
   `.gitignore` or switching to environment variables does not erase Git history.
+- Use an exact `${ENV:VARIABLE_NAME}` value in any YAML scalar that needs to be
+  supplied from the environment (such as S3 credentials or an APT signing key).
+  Referenced variables must exist and be non-empty. Partial string expansion
+  is intentionally unsupported and causes validation failure. Avoid storing
+  actual private keys or signing passphrases in public YAML files.
+- HTTP(S) endpoints are validated before provisioning. `NEXUS_USERNAME` and
+  `NEXUS_PASSWORD` have precedence over YAML values, independently per field.
+
+
+---
+
+## 🧹 Safe, targeted cleanup
+
+`nexus_cleaner.py` was deliberately changed to **never delete all resources**.
+It accepts only explicit names already present in your local YAML. The default
+mode is a **read-only preview**; an actual deletion requires `--apply` and an
+exact URL confirmation. `default` blob store deletion is always prohibited.
+
+```bash
+# Preview one configured repository (no deletion)
+python3 nexus_cleaner.py --config-dir "$HOME/.config/nexus-as-code" \
+  --repository npm-proxy-official
+
+# Explicitly delete only the same resource (irreversible)
+python3 nexus_cleaner.py --config-dir "$HOME/.config/nexus-as-code" \
+  --repository npm-proxy-official --apply \
+  --confirm-target https://nexus.example.com
+```
+
+Before deleting a blob store, the cleaner checks surviving repository storage
+references; it also checks whether selected repositories belong to surviving
+groups. If it cannot inspect dependencies, it refuses deletion. It does not
+remove resources that are absent from the current YAML config, and it never
+reads passwords from a CLI argument.
+
+See [Operations and safety](docs/OPERATIONS.md) for request behavior, examples,
+limitations, and the local test commands.
 
 ---
 

@@ -41,7 +41,7 @@ def _create_hosted(session, base_url: str, repo: dict) -> bool:
             "writePolicy": repo.get("write_policy", "allow_once"),
         },
         "apt": {
-            "distribution": repo.get("distribution", "bionic"),
+            "distribution": repo["distribution"],
         },
         "aptSigning": {
             "keypair": repo.get("signing_keypair", ""),
@@ -52,7 +52,7 @@ def _create_hosted(session, base_url: str, repo: dict) -> bool:
     if resp.status_code in (200, 201, 204):
         logger.info(f"Created APT hosted repo '{name}'.")
         return True
-    logger.error(f"Failed: {resp.status_code} {resp.text}")
+    logger.error(f"Failed: {resp.status_code}")
     return False
 
 def _create_proxy(session, base_url: str, repo: dict) -> bool:
@@ -82,13 +82,14 @@ def _create_proxy(session, base_url: str, repo: dict) -> bool:
             "autoBlock": repo.get("auto_block", True),
         },
         "apt": {
-            "distribution": repo.get("distribution", "bionic"),
+            "distribution": repo.get("distribution", ""),
             "flat": repo.get("flat", False),
+            "enforceDistribution": repo.get("enforce_distribution", False),
         },
     }
     resp = session.post(url, json=payload)
     if resp.status_code in (200, 201, 204):
         logger.info(f"Created APT proxy repo '{name}'.")
         return True
-    logger.error(f"Failed: {resp.status_code} {resp.text}")
+    logger.error(f"Failed: {resp.status_code}")
     return False

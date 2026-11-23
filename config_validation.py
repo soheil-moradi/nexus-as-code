@@ -164,5 +164,66 @@ def validate_config(config, formats):
                                 any(not isinstance(m, str) or not m.strip() for m in members)):
                             errors.append(f"{item_location}.members: expected a non-empty list of names")
                 _optional_string(repo, "blob_store", item_location, errors)
+                if fmt == "apt" and repo_type is not None and repo_type.lower() == "hosted":
+                    _required_string(repo, "distribution", item_location, errors)
+                    _required_string(repo, "signing_keypair", item_location, errors)
+                if fmt == "apt" and "distribution" in repo:
+                    # Proxy permits an empty distribution for multi-distribution
+                    # mode; hosted requires a non-empty distribution.
+                    if (not isinstance(repo["distribution"], str) or
+                            (repo_type is not None and repo_type.lower() == "hosted" and not repo["distribution"].strip())):
+                        errors.append(f"{item_location}.distribution: expected a string (non-empty for hosted)")
+                if fmt == "apt" and "enforce_distribution" in repo:
+                    if not isinstance(repo["enforce_distribution"], bool):
+                        errors.append(f"{item_location}.enforce_distribution: expected a boolean")
+                    elif repo["enforce_distribution"] and not repo.get("distribution"):
+                        errors.append(f"{item_location}.enforce_distribution: requires a distribution")
+                for field in ("online", "strict_content"):
+                    if field in repo and not isinstance(repo[field], bool):
+                        errors.append(f"{item_location}.{field}: expected a boolean")
+
+        # Local group dependencies must never reference another format, self,
+        # or contain cycles. External pre-existing members remain permitted.
+        local_formats = {
+            repo["name"]: fmt
+            for fmt, entries in repositories.items() if isinstance(entries, list)
+            for repo in entries if isinstance(repo, dict) and isinstance(repo.get("name"), str)
+        }
+        group_links = {}
+        for fmt, entries in repositories.items():
+            if not isinstance(entries, list):
+                continue
+            for index, repo in enumerate(entries):
+                if not isinstance(repo, dict) or str(repo.get("type", "")).lower() != "group":
+                    continue
+                name, members = repo.get("name"), repo.get("members")
+                if not isinstance(name, str) or not isinstance(members, list):
+                    continue
+                if len(members) != len(set(m for m in members if isinstance(m, str))):
+                    errors.append(f"repositories.{fmt}[{index}].members: duplicate member")
+                for member in members:
+                    if not isinstance(member, str):
+                        continue
+                    if member == name:
+                        errors.append(f"repositories.{fmt}[{index}].members: self-reference")
+                    elif member in local_formats and local_formats[member] != fmt:
+                        errors.append(f"repositories.{fmt}[{index}].members: '{member}' belongs to another format")
+                group_links[name] = [m for m in members if isinstance(m, str)]
+        # Local group-to-group cycles can be rejected without remote API access.
+        visiting, visited = set(), set()
+        def visit(node):
+            if node in visiting:
+                errors.append(f"repositories: cyclic group dependency at '{node}'")
+                return
+            if node in visited:
+                return
+            visiting.add(node)
+            for member in group_links.get(node, ()):
+                if member in group_links:
+                    visit(member)
+            visiting.remove(node)
+            visited.add(node)
+        for node in group_links:
+            visit(node)
 
     return errors

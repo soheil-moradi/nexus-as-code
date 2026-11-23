@@ -20,6 +20,9 @@ from config_validation import validate_config
 # ============================================================
 import importlib
 import os
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+from config_secrets import resolve_environment_references
 
 FORMAT_MODULE_MAP = {
     "apt":       "apt",
@@ -142,7 +145,7 @@ def load_config_from_dir(config_dir: str) -> Dict[str, Any]:
         sys.exit(1)
 
     merged = {}
-    yaml_files = sorted(base_path.glob("*.yml")) + sorted(base_path.glob("*.yaml"))
+    yaml_files = sorted((*base_path.glob("*.yml"), *base_path.glob("*.yaml")))
     if not yaml_files:
         logger.error(f"No .yml or .yaml files found in '{config_dir}'.")
         sys.exit(1)
@@ -151,7 +154,7 @@ def load_config_from_dir(config_dir: str) -> Dict[str, Any]:
         try:
             with file_path.open("r", encoding="utf-8") as fh:
                 data = yaml.load(fh, Loader=UniqueKeysSafeLoader)
-        except yaml.YAMLError as exc:
+        except (yaml.YAMLError, ValueError, TypeError) as exc:
             mark = getattr(exc, "problem_mark", None)
             location = f" at line {mark.line + 1}" if mark is not None else ""
             logger.error(f"Invalid YAML in '{file_path.name}'{location}.")
@@ -193,7 +196,7 @@ def load_config_from_dir(config_dir: str) -> Dict[str, Any]:
                     merged[key] = value
             else:
                 merged[key] = value
-        logger.debug(f"Merged '{file_path.name}'")
+        logger.debug("Merged '%s'", file_path.name)
 
     if "nexus" not in merged:
         logger.error("No 'nexus' configuration found in any file.")
@@ -204,8 +207,25 @@ def load_config_from_dir(config_dir: str) -> Dict[str, Any]:
 #  Core functions
 # ============================================================
 
+class NexusSession(requests.Session):
+    """Bound every request; retry safe reads only, never write operations."""
+
+    def request(self, method, url, **kwargs):
+        kwargs.setdefault("timeout", (5, 30))
+        return super().request(method, url, **kwargs)
+
+
 def build_session(nexus_cfg: dict) -> requests.Session:
-    session = requests.Session()
+    session = NexusSession()
+    retries = Retry(
+        total=2,
+        backoff_factor=0.5,
+        status_forcelist=(429, 502, 503, 504),
+        allowed_methods=frozenset({"GET", "HEAD"}),
+        respect_retry_after_header=True,
+    )
+    session.mount("http://", HTTPAdapter(max_retries=retries))
+    session.mount("https://", HTTPAdapter(max_retries=retries))
     session.auth = (nexus_cfg["username"], nexus_cfg["password"])
     session.headers.update({"Accept": "application/json", "Content-Type": "application/json"})
     return session
@@ -217,8 +237,8 @@ def verify_connection(session: requests.Session, base_url: str) -> bool:
             logger.info(f"Connected to Nexus at {base_url}")
             return True
         logger.error(f"Nexus returned HTTP {resp.status_code} – check credentials.")
-    except requests.ConnectionError as exc:
-        logger.error(f"Cannot reach Nexus at {base_url}: {exc}")
+    except requests.RequestException:
+        logger.error("Cannot reach Nexus at %s (network or HTTP error).", base_url)
     return False
 
 def blob_store_exists(session, base_url: str, name: str) -> bool:
@@ -249,8 +269,31 @@ def provision_blobs(session, base_url: str, blob_list: list, dry_run: bool) -> t
             failed += 1
     return ok, failed
 
+def order_repository_definitions(repo_cfg: dict) -> dict:
+    """Create hosted/proxy dependencies before groups (including nested groups)."""
+    ordered = {}
+    for fmt, entries in repo_cfg.items():
+        remaining = list(entries)
+        result = []
+        while remaining:
+            names = {item.get("name") for item in remaining}
+            ready = next((
+                index for index, item in enumerate(remaining)
+                if item.get("type", "").lower() != "group"
+                or not any(member in names for member in item.get("members", []))
+            ), None)
+            if ready is None:
+                raise ValueError(f"Cyclic group dependency for format '{fmt}'")
+            result.append(remaining.pop(ready))
+        ordered[fmt] = result
+    return ordered
+
+
 def provision_repositories(session, base_url: str, repo_cfg: dict, dry_run: bool) -> tuple:
     ok = failed = 0
+    blob_lookup = {}
+    failed_names = set()
+    repo_cfg = order_repository_definitions(repo_cfg)
     for fmt, repo_list in repo_cfg.items():
         try:
             module = load_module(fmt)
@@ -274,20 +317,30 @@ def provision_repositories(session, base_url: str, repo_cfg: dict, dry_run: bool
             repo_type = repo.get("type", "?")
             blob_store = repo.get("blob_store", "default")
 
+            if str(repo_type).lower() == "group" and any(member in failed_names for member in repo.get("members", [])):
+                logger.error("Cannot create group '%s': a configured member failed.", name)
+                failed += 1
+                failed_names.add(name)
+                continue
+
             if not dry_run:
                 try:
-                    exists = blob_store_exists(session, base_url, blob_store)
+                    if blob_store not in blob_lookup:
+                        blob_lookup[blob_store] = blob_store_exists(session, base_url, blob_store)
+                    exists = blob_lookup[blob_store]
                 except Exception:
                     logger.exception("Cannot check blob store '%s' for repository '%s'.", blob_store, name)
                     failed += 1
+                    failed_names.add(name)
                     continue
                 if not exists:
                     logger.error("Blob store '%s' not found – skipping repo '%s'", blob_store, name)
                     failed += 1
+                    failed_names.add(name)
                     continue
 
             if dry_run:
-                logger.info(f"[DRY-RUN] Would create {fmt} {repo_type} repo '{name}'.")
+                logger.info("[DRY-RUN] Would create %s %s repo '%s'.", fmt, repo_type, name)
                 ok += 1
                 continue
 
@@ -296,12 +349,14 @@ def provision_repositories(session, base_url: str, repo_cfg: dict, dry_run: bool
             except Exception:
                 logger.exception("Failed to provision %s repository '%s'.", fmt, name)
                 failed += 1
+                failed_names.add(name)
                 continue
             if created:
                 ok += 1
             else:
                 logger.error("Failed to provision %s repository '%s'.", fmt, name)
                 failed += 1
+                failed_names.add(name)
     return ok, failed
 
 # ============================================================
@@ -345,6 +400,13 @@ def main() -> None:
 
     config = load_config_from_dir(args.config_dir)
     config, sensitive_values = resolve_nexus_credentials(config)
+    try:
+        config, extra_secrets = resolve_environment_references(config)
+    except ValueError as exc:
+        configure_log_redaction(sensitive_values)
+        logger.error("Invalid configuration: %s", exc)
+        sys.exit(1)
+    sensitive_values.extend(extra_secrets)
     configure_log_redaction(sensitive_values)
     validation_errors = validate_config(config, FORMAT_MODULE_MAP)
     if validation_errors:
@@ -383,7 +445,10 @@ def main() -> None:
             logger.info("No repositories defined – skipping.")
 
     logger.info("─" * 50)
-    logger.info(f"Done.  ✔ {total_ok} succeeded   ✘ {total_failed} failed")
+    if args.dry_run:
+        logger.info("Dry-run only: %d planned, %d rejected; no Nexus changes made.", total_ok, total_failed)
+    else:
+        logger.info("Done.  ✔ %d completed   ✘ %d failed", total_ok, total_failed)
     if total_failed:
         sys.exit(1)
 
